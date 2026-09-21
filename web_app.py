@@ -5,7 +5,7 @@ import io
 import pandas as pd
 import openpyxl
 import config
-import process_data  # 直接引入你的默认引擎 process_data.py
+import process_data
 
 st.set_page_config(
     page_title="假发订单自动化处理系统",
@@ -13,11 +13,31 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 读取 process_data 中的数据库文件名
+# 历史去重数据库文件名
 DB_FILE = getattr(process_data, 'DB_FILE_NAME', "seen_database.txt")
 
-# 1. 读取去重数据库
-global_seen_phones, global_seen_emails = process_data.load_local_database(DB_FILE)
+# 1. 本地数据库加载与保存逻辑（不依赖 process_data 中的函数）
+def local_load_db(db_path):
+    seen_phones, seen_emails = set(), set()
+    if os.path.exists(db_path):
+        with open(db_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("PHONE:"):
+                    seen_phones.add(line.replace("PHONE:", ""))
+                elif line.startswith("EMAIL:"):
+                    seen_emails.add(line.replace("EMAIL:", ""))
+    return seen_phones, seen_emails
+
+def local_save_db(db_path, seen_phones, seen_emails):
+    with open(db_path, "w", encoding="utf-8") as f:
+        for p in sorted(seen_phones):
+            f.write(f"PHONE:{p}\n")
+        for e in sorted(seen_emails):
+            f.write(f"EMAIL:{e}\n")
+
+# 加载数据库
+global_seen_phones, global_seen_emails = local_load_db(DB_FILE)
 
 # 2. 默认预览范例数据
 def get_default_sample_df():
@@ -81,11 +101,9 @@ is_real_data = False
 wb_processed = None
 
 if uploaded_file:
-    # 动态将用户输入的话术赋予 config
     config.DEFAULT_MSG_H = msg_h_text
     config.DEFAULT_MSG_K = msg_k_text
 
-    # 写入临时输入文件
     temp_input_path = f"temp_in_{uploaded_file.name}"
     with open(temp_input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
@@ -159,13 +177,12 @@ else:
         ws_tar = wb_processed.active
         header_row = [cell.value for cell in ws_tar[1]]
         
-        # 找出取消勾选的列索引，从右往左剔除
         cols_to_delete = [idx for idx, h in enumerate(header_row, start=1) if h not in selected_cols and h is not None and h != ""]
         for col_idx in sorted(cols_to_delete, reverse=True):
             ws_tar.delete_cols(col_idx)
 
-        # 保存去重数据库
-        process_data.save_local_database(DB_FILE, global_seen_phones, global_seen_emails)
+        # 保存更新后的去重数据库
+        local_save_db(DB_FILE, global_seen_phones, global_seen_emails)
 
         output_buffer = io.BytesIO()
         wb_processed.save(output_buffer)
