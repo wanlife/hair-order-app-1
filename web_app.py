@@ -31,16 +31,11 @@ st.markdown("""
     footer {visibility: hidden;}
     
     /* 侧边栏样式美化 */
-    css-1d391kg, [data-testid="stSidebar"] {
+    [data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #e2e8f0;
     }
 
-    /* 模块卡片容器效果 (Card Style) */
-    div.block-container > div:has(div.element-container) {
-        background: transparent;
-    }
-    
     /* 针对输入框、文本域进行圆角和微边框升级 */
     .stTextInput input, .stTextArea textarea, .stSelectbox select {
         border-radius: 8px !important;
@@ -122,7 +117,7 @@ df_current = get_default_sample_df()
 # ---------------- 侧边栏：商业级 SaaS 导航与控制台 ----------------
 with st.sidebar:
     st.markdown("### ⚡ 商务控制台")
-    st.caption("系统状态: 🟢 运行中 (Enterprise v2.4)")
+    st.caption("系统状态: 🟢 运行中 (Enterprise v2.5)")
     st.markdown("---")
     
     st.subheader("💾 客户全局去重库")
@@ -258,8 +253,8 @@ if search_kw:
 if sku_col and selected_skus:
     df_display = df_display[df_display[sku_col[0]].astype(str).isin(selected_skus)]
 
-status_tag = "已加载真实业务数据" else "系统预设范例"
-st.markdown(f"**数据预览清单** （当前筛选出 **{len(df_display)}** 条记录 / 总计 {len(df_current)} 条）：")
+status_tag = "已加载真实业务数据" if is_real_data else "系统预设范例"
+st.markdown(f"**数据预览清单** （当前筛选出 **{len(df_display)}** 条记录 / 总计 {len(df_current)} 条，当前状态：{status_tag}）：")
 st.dataframe(df_display, use_container_width=True, height=280)
 
 st.markdown("---")
