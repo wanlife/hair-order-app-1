@@ -3,6 +3,7 @@ import streamlit as st
 import os
 import io
 import glob
+import time
 import traceback
 import pandas as pd
 import openpyxl
@@ -108,17 +109,10 @@ if uploaded_file:
     config.DEFAULT_MSG_H = msg_h_text
     config.DEFAULT_MSG_K = msg_k_text
 
-    # 确保输出目录存在
-    out_dir = "处理完成"
-    os.makedirs(out_dir, exist_ok=True)
-    
-    # 清理历史处理完成的旧文件，避免混淆
-    for old_file in glob.glob(os.path.join(out_dir, "*.xlsx")):
-        try:
-            os.remove(old_file)
-        except Exception:
-            pass
+    # 记录运行前的系统时间
+    start_time = time.time()
 
+    # 临时输入文件保存
     temp_input_path = uploaded_file.name
     with open(temp_input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
@@ -136,15 +130,22 @@ if uploaded_file:
         except Exception as ex:
             process_error = traceback.format_exc()
 
-        # 智能寻找 『处理完成/』 目录下刚生成的 xlsx 文件
-        generated_files = glob.glob(os.path.join(out_dir, "*.xlsx"))
-        
+        # ---------------- 智能全局搜寻最新的导出文件 ----------------
+        # 搜寻所有 xlsx，排除掉上传的临时原文件
+        all_xlsx = glob.glob("**/*.xlsx", recursive=True) + glob.glob("*.xlsx")
+        candidate_files = []
+        for fpath in set(all_xlsx):
+            if os.path.basename(fpath) != uploaded_file.name:
+                # 必须是运行开始之后被创建或修改的文件
+                if os.path.getmtime(fpath) >= start_time - 2:
+                    candidate_files.append(fpath)
+
         if process_error:
             st.error("❌ 引擎在运行 process_data.py 时发生异常，详细错误如下：")
             st.code(process_error)
-        elif generated_files:
-            # 找到最新的处理文件
-            out_path = max(generated_files, key=os.path.getmtime)
+        elif candidate_files:
+            # 找到最新的一个文件
+            out_path = max(candidate_files, key=os.path.getmtime)
             try:
                 wb_processed = openpyxl.load_workbook(out_path)
                 ws = wb_processed.active
@@ -153,11 +154,11 @@ if uploaded_file:
                     headers = [str(h) if h is not None else "" for h in raw_data[0]]
                     df_current = pd.DataFrame(raw_data[1:], columns=headers)
                     is_real_data = True
-                    st.success("✅ 文件处理成功！格式与高亮已完全保留。")
+                    st.success(f"✅ 文件处理成功！成功读取生成文件: [{os.path.basename(out_path)}]")
             except Exception as read_ex:
                 st.error(f"❌ 读取处理完成的 Excel 文件失败：{read_ex}")
         else:
-            st.warning("⚠️ 引擎运行完毕，但在『处理完成』目录中未检测到生成的 Excel 文件。请确认原始 Excel 表格中的列名（如 电话/邮箱/订单号）是否与需求一致。")
+            st.warning("⚠️ 引擎运行完毕但未生成新 Excel。请检查上传文件的**表头列名**（如“电话”、“邮箱”等）是否与 `process_data.py` 要求的表头匹配！")
 
     if os.path.exists(temp_input_path):
         os.remove(temp_input_path)
