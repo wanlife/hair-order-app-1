@@ -5,7 +5,7 @@ import io
 import pandas as pd
 import openpyxl
 import config
-import process_data
+import process_data  # 引入你的 process_data.py 引擎
 
 st.set_page_config(
     page_title="假发订单自动化处理系统",
@@ -13,10 +13,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 历史去重数据库文件名
+# 确定数据库文件名
 DB_FILE = getattr(process_data, 'DB_FILE_NAME', "seen_database.txt")
 
-# 1. 本地数据库加载与保存逻辑（不依赖 process_data 中的函数）
+# 1. 独立数据库加载与保存逻辑
 def local_load_db(db_path):
     seen_phones, seen_emails = set(), set()
     if os.path.exists(db_path):
@@ -36,7 +36,6 @@ def local_save_db(db_path, seen_phones, seen_emails):
         for e in sorted(seen_emails):
             f.write(f"EMAIL:{e}\n")
 
-# 加载数据库
 global_seen_phones, global_seen_emails = local_load_db(DB_FILE)
 
 # 2. 默认预览范例数据
@@ -101,6 +100,7 @@ is_real_data = False
 wb_processed = None
 
 if uploaded_file:
+    # 同步网页配置的话术
     config.DEFAULT_MSG_H = msg_h_text
     config.DEFAULT_MSG_K = msg_k_text
 
@@ -109,10 +109,32 @@ if uploaded_file:
         f.write(uploaded_file.getbuffer())
 
     with st.spinner("正在调用默认引擎进行数据处理（单元格合并/公式/颜色标注/跨表去重）..."):
-        # 调用 process_data.py 进行处理
-        process_data.process_single_file(temp_input_path, global_seen_phones, global_seen_emails)
-        
+        # 兼容性调用 process_data.py 中的处理函数
+        try:
+            if hasattr(process_data, 'process_single_file'):
+                # 尝试标准参数调用
+                try:
+                    process_data.process_single_file(temp_input_path, global_seen_phones, global_seen_emails)
+                except TypeError:
+                    process_data.process_single_file(temp_input_path)
+            elif hasattr(process_data, 'process_excel'):
+                process_data.process_excel(temp_input_path)
+            elif hasattr(process_data, 'main'):
+                process_data.main()
+            else:
+                st.error("⚠️ 未在 process_data.py 中找到可执行的主处理函数，请检查函数名称！")
+        except Exception as e:
+            st.error(f"⚠️ 处理过程中报错: {str(e)}")
+
+        # 检查生成的目标文件
         out_path = os.path.join("处理完成", f"已处理+{uploaded_file.name}")
+        
+        # 兼容找不到输出文件时的情况
+        if not os.path.exists(out_path) and os.path.exists("处理完成"):
+            files = os.listdir("处理完成")
+            if files:
+                out_path = os.path.join("处理完成", files[0])
+
         if os.path.exists(out_path):
             wb_processed = openpyxl.load_workbook(out_path)
             ws = wb_processed.active
@@ -121,7 +143,7 @@ if uploaded_file:
                 headers = [str(h) if h is not None else "" for h in raw_data[0]]
                 df_current = pd.DataFrame(raw_data[1:], columns=headers)
                 is_real_data = True
-                st.success("✅ 引擎处理完成！合并单元格与高亮格式已成功保留。")
+                st.success("✅ 引擎处理完成！已成功保留合并单元格与高亮格式。")
             
             if os.path.exists(temp_input_path):
                 os.remove(temp_input_path)
@@ -181,7 +203,6 @@ else:
         for col_idx in sorted(cols_to_delete, reverse=True):
             ws_tar.delete_cols(col_idx)
 
-        # 保存更新后的去重数据库
         local_save_db(DB_FILE, global_seen_phones, global_seen_emails)
 
         output_buffer = io.BytesIO()
