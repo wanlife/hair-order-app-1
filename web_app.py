@@ -51,7 +51,9 @@ UPLOAD_DIR = "历史输入文件"
 OUTPUT_DIR = "处理完成"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-DB_FILE = process_data.DB_FILE_NAME
+
+# 修复：直接定义去重数据库文件名，不依赖 process_data 内部属性
+DB_FILE = "seen_database.txt"
 
 # 加载本地去重记忆库
 global_seen_phones, global_seen_emails = process_data.load_local_database(DB_FILE)
@@ -157,9 +159,7 @@ if uploaded_file:
     with st.spinner("🚀 商业引擎正在全速解析，执行去重并生成格式化表格..."):
         process_error = None
         try:
-            # 直接调用您提供的 process_data.py 中的核心单文件处理逻辑
             process_data.process_single_file(saved_input_path, global_seen_phones, global_seen_emails)
-            # 同步更新本地数据库 txt
             process_data.save_local_database(DB_FILE, global_seen_phones, global_seen_emails)
             
             last_output_filename = f"已处理+{uploaded_file.name}"
@@ -252,7 +252,6 @@ with st.container():
                     use_container_width=True
                 )
             with col_down2:
-                # 额外拓展：一键导出包含苹果生态/iMessage关键字的触达表
                 imessage_df = df_current[df_current.astype(str).apply(lambda row: row.str.contains("iMessage|Apple", case=False).any(), axis=1)]
                 imessage_buffer = io.BytesIO()
                 imessage_df.to_excel(imessage_buffer, index=False)
