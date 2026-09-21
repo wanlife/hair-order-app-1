@@ -4,6 +4,7 @@ import os
 import io
 import glob
 import time
+import datetime
 import traceback
 import pandas as pd
 import openpyxl
@@ -16,10 +17,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 历史去重数据库文件名
+# 创建历史记录存储文件夹
+UPLOAD_DIR = "历史输入文件"
+OUTPUT_DIR = "处理完成"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 DB_FILE = "seen_database.txt"
 
-# 1. 独立数据库加载与保存逻辑
+# 1. 数据库加载与保存
 def local_load_db(db_path):
     seen_phones, seen_emails = set(), set()
     if os.path.exists(db_path):
@@ -54,23 +60,12 @@ def get_default_sample_df():
             "邮箱": "jessica@gmail.com",
             "Hello 姓名,": '="Hello "&D2&","&CHAR(10)&CHAR(10)&"Thanks for purchasing..."',
             "Ambassador 话术": '="Hello "&D2&","&CHAR(10)&CHAR(10)&"Thank you for choosing..."'
-        },
-        {
-            "订单号": "113-7654321-8904321",
-            "尺寸": "Straight 24 inch",
-            "订单日期": "2026-09-16",
-            "姓名": "Ashley Brown",
-            "电话": "+1 (202) 555-0188",
-            "回复情况": "",
-            "邮箱": "ashley.test@yahoo.com",
-            "Hello 姓名,": '="Hello "&D3&","&CHAR(10)&CHAR(10)&"Thanks for purchasing..."',
-            "Ambassador 话术": '="Hello "&D3&","&CHAR(10)&CHAR(10)&"Thank you for choosing..."'
         }
     ])
 
 df_current = get_default_sample_df()
 
-# ---------------- 侧边栏：数据库控制 ----------------
+# ---------------- 侧边栏：控制台与历史文件归档 ----------------
 st.sidebar.title("⚙️ 控制台")
 st.sidebar.subheader("💾 历史数据去重库")
 st.sidebar.metric("已记录手机号", f"{len(global_seen_phones)} 个")
@@ -84,7 +79,39 @@ if st.sidebar.button("🧹 清空历史去重记忆", type="secondary"):
     st.sidebar.success("历史去重记忆已重置！")
     st.rerun()
 
-# ---------------- 主界面（四大模块固定排列） ----------------
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 文件历史档案馆")
+
+# 查看输入历史
+input_history_files = sorted(glob.glob(os.path.join(UPLOAD_DIR, "*.xlsx")), key=os.path.getmtime, reverse=True)
+with st.sidebar.expander(f"📥 原始上传历史 ({len(input_history_files)} 个)"):
+    if input_history_files:
+        for f in input_history_files[:10]:
+            fname = os.path.basename(f)
+            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime('%m-%d %H:%M')
+            st.caption(f"📄 {fname} ({mtime})")
+    else:
+        st.write("暂无历史上传")
+
+# 查看输出历史并支持随时重新下载
+output_history_files = sorted(glob.glob(os.path.join(OUTPUT_DIR, "*.xlsx")), key=os.path.getmtime, reverse=True)
+with st.sidebar.expander(f"📤 已导出文件历史 ({len(output_history_files)} 个)"):
+    if output_history_files:
+        for f in output_history_files[:10]:
+            fname = os.path.basename(f)
+            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime('%m-%d %H:%M')
+            with open(f, "rb") as file_data:
+                st.download_button(
+                    label=f"⬇️ {fname}",
+                    data=file_data.read(),
+                    file_name=fname,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"hist_dl_{fname}"
+                )
+    else:
+        st.write("暂无导出历史")
+
+# ---------------- 主界面 ----------------
 st.title("✂️ 假发订单数据自动化处理与高级定制导出系统")
 
 # 模块 1：话术模板配置
@@ -105,23 +132,20 @@ is_real_data = False
 wb_processed = None
 
 if uploaded_file:
-    # 保持配置同步
     config.DEFAULT_MSG_H = msg_h_text
     config.DEFAULT_MSG_K = msg_k_text
 
-    # 记录运行前的系统时间
-    start_time = time.time()
-
-    # 临时输入文件保存
-    temp_input_path = uploaded_file.name
-    with open(temp_input_path, "wb") as f:
+    # 1. 保存到输入历史档案库
+    saved_input_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
+    with open(saved_input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    with st.spinner("正在调用引擎进行数据处理..."):
+    with st.spinner("正在生成话术公式、计算去重并处理格式..."):
         process_error = None
+        out_file_path = None
         try:
-            process_data.run_excel_processing(
-                temp_input_path, 
+            out_file_path = process_data.run_excel_processing(
+                saved_input_path, 
                 msg_h_text, 
                 msg_k_text, 
                 global_seen_phones, 
@@ -130,38 +154,22 @@ if uploaded_file:
         except Exception as ex:
             process_error = traceback.format_exc()
 
-        # ---------------- 智能全局搜寻最新的导出文件 ----------------
-        # 搜寻所有 xlsx，排除掉上传的临时原文件
-        all_xlsx = glob.glob("**/*.xlsx", recursive=True) + glob.glob("*.xlsx")
-        candidate_files = []
-        for fpath in set(all_xlsx):
-            if os.path.basename(fpath) != uploaded_file.name:
-                # 必须是运行开始之后被创建或修改的文件
-                if os.path.getmtime(fpath) >= start_time - 2:
-                    candidate_files.append(fpath)
-
         if process_error:
-            st.error("❌ 引擎在运行 process_data.py 时发生异常，详细错误如下：")
+            st.error("❌ 引擎处理失败，详细错误：")
             st.code(process_error)
-        elif candidate_files:
-            # 找到最新的一个文件
-            out_path = max(candidate_files, key=os.path.getmtime)
+        elif out_file_path and os.path.exists(out_file_path):
             try:
-                wb_processed = openpyxl.load_workbook(out_path)
+                wb_processed = openpyxl.load_workbook(out_file_path, data_only=False)
                 ws = wb_processed.active
                 raw_data = list(ws.values)
                 if len(raw_data) > 0:
                     headers = [str(h) if h is not None else "" for h in raw_data[0]]
                     df_current = pd.DataFrame(raw_data[1:], columns=headers)
                     is_real_data = True
-                    st.success(f"✅ 文件处理成功！成功读取生成文件: [{os.path.basename(out_path)}]")
+                    st.success(f"✅ 处理完成！已自动加入 H/K 列话术公式，且已保存至【输出历史档案】！")
             except Exception as read_ex:
-                st.error(f"❌ 读取处理完成的 Excel 文件失败：{read_ex}")
-        else:
-            st.warning("⚠️ 引擎运行完毕但未生成新 Excel。请检查上传文件的**表头列名**（如“电话”、“邮箱”等）是否与 `process_data.py` 要求的表头匹配！")
+                st.error(f"❌ 读取结果文件失败：{read_ex}")
 
-    if os.path.exists(temp_input_path):
-        os.remove(temp_input_path)
 else:
     st.info("💡 当前未上传文件，下方展示系统**标准默认输出范例**。")
     df_current = get_default_sample_df()
