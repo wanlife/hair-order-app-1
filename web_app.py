@@ -3,7 +3,6 @@ import streamlit as st
 import os
 import io
 import glob
-import time
 import datetime
 import traceback
 import pandas as pd
@@ -12,54 +11,33 @@ import config
 import process_data
 
 st.set_page_config(
-    page_title="假发订单智能处理系统 - Enterprise SaaS",
+    page_title="假发跨境电商订单智能处理系统 - Enterprise SaaS",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ==================== 注入现代商业级 UI 的自定义 CSS ====================
+# ==================== 现代商业 SaaS UI 样式注入 ====================
 st.markdown("""
 <style>
-    /* 全局背景与字体微调 */
     .stApp {
         background-color: #f8fafc;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    
-    /* 隐藏默认的 Streamlit 顶栏与页脚杂项，提升清爽度 */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    
-    /* 侧边栏样式美化 */
     [data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #e2e8f0;
     }
-
-    /* 针对输入框、文本域进行圆角和微边框升级 */
     .stTextInput input, .stTextArea textarea, .stSelectbox select {
         border-radius: 8px !important;
         border: 1px solid #cbd5e1 !important;
     }
-    .stTextInput input:focus, .stTextArea textarea:focus {
-        border-color: #3b82f6 !important;
-        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15) !important;
-    }
-
-    /* 按钮美化：圆角、高亮交互 */
     .stButton button, .stDownloadButton button {
         border-radius: 8px !important;
         font-weight: 500 !important;
         transition: all 0.2s ease-in-out;
     }
-    
-    /* 成功与提示横幅美化 */
-    .stAlert {
-        border-radius: 8px !important;
-        border: none !important;
-    }
-    
-    /* 表格容器包裹优化 */
     [data-testid="stDataFrame"] {
         border-radius: 8px;
         overflow: hidden;
@@ -69,33 +47,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 文件夹路径与数据库配置
 UPLOAD_DIR = "历史输入文件"
 OUTPUT_DIR = "处理完成"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-DB_FILE = "seen_database.txt"
+DB_FILE = process_data.DB_FILE_NAME
 
-def local_load_db(db_path):
-    seen_phones, seen_emails = set(), set()
-    if os.path.exists(db_path):
-        with open(db_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("PHONE:"):
-                    seen_phones.add(line.replace("PHONE:", ""))
-                elif line.startswith("EMAIL:"):
-                    seen_emails.add(line.replace("EMAIL:", ""))
-    return seen_phones, seen_emails
-
-def local_save_db(db_path, seen_phones, seen_emails):
-    with open(db_path, "w", encoding="utf-8") as f:
-        for p in sorted(seen_phones):
-            f.write(f"PHONE:{p}\n")
-        for e in sorted(seen_emails):
-            f.write(f"EMAIL:{e}\n")
-
-global_seen_phones, global_seen_emails = local_load_db(DB_FILE)
+# 加载本地去重记忆库
+global_seen_phones, global_seen_emails = process_data.load_local_database(DB_FILE)
 
 def get_default_sample_df():
     return pd.DataFrame([
@@ -106,18 +65,23 @@ def get_default_sample_df():
             "姓名": "Jessica Smith",
             "电话": "+1 (202) 555-0143",
             "回复情况": "Sep 2026",
-            "邮箱": "jessica@gmail.com",
+            "邮箱": "jessica@icloud.com",
             "Hello 姓名,": '="Hello "&D2&","&CHAR(10)&CHAR(10)&"Thanks for purchasing..."',
+            "": "",
+            "": "",
             "Ambassador 话术": '="Hello "&D2&","&CHAR(10)&CHAR(10)&"Thank you for choosing..."'
         }
     ])
 
 df_current = get_default_sample_df()
+is_real_data = False
+wb_processed = None
+last_output_filename = ""
 
-# ---------------- 侧边栏：商业级 SaaS 导航与控制台 ----------------
+# ---------------- 侧边栏控制台 ----------------
 with st.sidebar:
     st.markdown("### ⚡ 商务控制台")
-    st.caption("系统状态: 🟢 运行中 (Enterprise v2.5)")
+    st.caption("引擎状态: 🟢 运行中 (去重记忆同步)")
     st.markdown("---")
     
     st.subheader("💾 客户全局去重库")
@@ -130,7 +94,7 @@ with st.sidebar:
             os.remove(DB_FILE)
         global_seen_phones.clear()
         global_seen_emails.clear()
-        st.success("已重置！")
+        st.success("去重记忆已重置！")
         st.rerun()
 
     st.markdown("---")
@@ -164,9 +128,9 @@ with st.sidebar:
         else:
             st.caption("暂无导出历史")
 
-# ---------------- 主界面（商务 SaaS 风格排版） ----------------
+# ---------------- 主界面 ----------------
 st.title("✂️ 假发跨境电商订单智能处理系统")
-st.markdown("基于云端自动化引擎的多功能订单清洗、话术动态拼装与去重系统。")
+st.markdown("集成 **Apple ID / iMessage 绿色高亮标注**、**跨表全局去重**与**动态话术公式注入**的私域转化引擎。")
 st.markdown("---")
 
 # 模块 1：话术模板配置
@@ -174,9 +138,9 @@ with st.container():
     st.subheader("1. 💬 自动化话术配置模板")
     col_h, col_k = st.columns(2)
     with col_h:
-        msg_h_text = st.text_area("H列：奖励邀请话术 (Hello [姓名],)", value=getattr(config, 'DEFAULT_MSG_H', "Thanks for purchasing..."), height=90)
+        msg_h_text = st.text_area("H列：奖励邀请话术模板提示", value=getattr(config, 'DEFAULT_MSG_H', "Thanks for purchasing..."), height=90)
     with col_k:
-        msg_k_text = st.text_area("K列：Ambassador 专属体验话术", value=getattr(config, 'DEFAULT_MSG_K', "Thank you for choosing..."), height=90)
+        msg_k_text = st.text_area("K列：Ambassador 体验话术模板提示", value=getattr(config, 'DEFAULT_MSG_K', "Thank you for choosing..."), height=90)
 
 st.markdown("---")
 
@@ -185,36 +149,23 @@ with st.container():
     st.subheader("2. 📂 订单数据接入")
     uploaded_file = st.file_uploader("支持拖拽原始 Amazon 订单表格 (.xlsx)", type=["xlsx"])
 
-is_real_data = False
-wb_processed = None
-
 if uploaded_file:
-    config.DEFAULT_MSG_H = msg_h_text
-    config.DEFAULT_MSG_K = msg_k_text
-
     saved_input_path = os.path.join(UPLOAD_DIR, uploaded_file.name)
     with open(saved_input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    with st.spinner("🚀 商业引擎正在全速解析并清洗数据..."):
+    with st.spinner("🚀 商业引擎正在全速解析，执行去重并生成格式化表格..."):
         process_error = None
-        out_file_path = None
         try:
-            out_file_path = process_data.run_excel_processing(
-                saved_input_path, 
-                msg_h_text, 
-                msg_k_text, 
-                global_seen_phones, 
-                global_seen_emails
-            )
-        except Exception as ex:
-            process_error = traceback.format_exc()
-
-        if process_error:
-            st.error("❌ 引擎运行遇到异常：")
-            st.code(process_error)
-        elif out_file_path and os.path.exists(out_file_path):
-            try:
+            # 直接调用您提供的 process_data.py 中的核心单文件处理逻辑
+            process_data.process_single_file(saved_input_path, global_seen_phones, global_seen_emails)
+            # 同步更新本地数据库 txt
+            process_data.save_local_database(DB_FILE, global_seen_phones, global_seen_emails)
+            
+            last_output_filename = f"已处理+{uploaded_file.name}"
+            out_file_path = os.path.join(OUTPUT_DIR, last_output_filename)
+            
+            if os.path.exists(out_file_path):
                 wb_processed = openpyxl.load_workbook(out_file_path, data_only=False)
                 ws = wb_processed.active
                 raw_data = list(ws.values)
@@ -222,12 +173,15 @@ if uploaded_file:
                     headers = [str(h) if h is not None else "" for h in raw_data[0]]
                     df_current = pd.DataFrame(raw_data[1:], columns=headers)
                     is_real_data = True
-                    st.success(f"✨ 订单处理成功！已自动注入公式、高亮重复客户，并存档至云端历史。")
-            except Exception as read_ex:
-                st.error(f"❌ 读取结果失败：{read_ex}")
+                    st.success("✨ 订单清洗成功！已完成跨表全局去重、Apple ID/iMessage 亮绿标识。")
+        except Exception as ex:
+            process_error = traceback.format_exc()
 
+        if process_error:
+            st.error("❌ 引擎运行遇到异常：")
+            st.code(process_error)
 else:
-    st.info("💡 提示：当前未上传文件，下方展示系统**标准内测范例数据**。上传真实文件后将自动切换。")
+    st.info("💡 提示：当前未上传文件，下方展示系统**标准内测范例数据**。上传真实文件后将自动加载处理结果。")
     df_current = get_default_sample_df()
 
 st.markdown("---")
@@ -259,7 +213,7 @@ st.dataframe(df_display, use_container_width=True, height=280)
 
 st.markdown("---")
 
-# 模块 4：自定义导出列与下载
+# 模块 4：自定义导出列与下载中心
 with st.container():
     st.subheader("4. 🎯 定制化导出与下载中心")
     all_available_cols = [c for c in df_current.columns if c != ""]
@@ -284,18 +238,30 @@ with st.container():
             for col_idx in sorted(cols_to_delete, reverse=True):
                 ws_tar.delete_cols(col_idx)
 
-            local_save_db(DB_FILE, global_seen_phones, global_seen_emails)
-
             output_buffer = io.BytesIO()
             wb_processed.save(output_buffer)
 
-            st.download_button(
-                label="📥 立即下载定制处理后的 Excel 商业报表",
-                data=output_buffer.getvalue(),
-                file_name=f"商用已处理+{uploaded_file.name}",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary",
-                use_container_width=True
-            )
+            col_down1, col_down2 = st.columns(2)
+            with col_down1:
+                st.download_button(
+                    label="📥 立即下载主订单商业报表 (.xlsx)",
+                    data=output_buffer.getvalue(),
+                    file_name=last_output_filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    use_container_width=True
+                )
+            with col_down2:
+                # 额外拓展：一键导出包含苹果生态/iMessage关键字的触达表
+                imessage_df = df_current[df_current.astype(str).apply(lambda row: row.str.contains("iMessage|Apple", case=False).any(), axis=1)]
+                imessage_buffer = io.BytesIO()
+                imessage_df.to_excel(imessage_buffer, index=False)
+                st.download_button(
+                    label="🍏 一键导出 iMessage / 苹果生态精准触达表",
+                    data=imessage_buffer.getvalue(),
+                    file_name=f"iMessage专用触达+{uploaded_file.name if uploaded_file else 'sample.xlsx'}",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
         else:
             st.button("📥 立即下载定制处理后的 Excel 商业报表（请先在上方上传真实订单）", disabled=True, use_container_width=True)
