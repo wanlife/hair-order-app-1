@@ -106,13 +106,16 @@ if uploaded_file:
     config.DEFAULT_MSG_H = msg_h_text
     config.DEFAULT_MSG_K = msg_k_text
 
-    temp_input_path = f"temp_in_{uploaded_file.name}"
+    # 确保保存与输出目录存在
+    os.makedirs("处理完成", exist_ok=True)
+    
+    temp_input_path = uploaded_file.name
     with open(temp_input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    with st.spinner("正在调用 run_excel_processing 引擎进行数据处理..."):
+    with st.spinner("正在调用处理引擎，请稍候..."):
+        process_error = None
         try:
-            # 精准按照 process_data.py 所需的 5 个参数调用
             process_data.run_excel_processing(
                 temp_input_path, 
                 msg_h_text, 
@@ -121,27 +124,34 @@ if uploaded_file:
                 global_seen_emails
             )
         except Exception as ex:
-            st.error(f"⚠️ 处理发生错误: {ex}")
+            process_error = str(ex)
 
-        # 读取处理完成的文件
+        # 智能搜寻处理完成的文件
         out_path = os.path.join("处理完成", f"已处理+{uploaded_file.name}")
         if not os.path.exists(out_path) and os.path.exists("处理完成"):
             files = [f for f in os.listdir("处理完成") if f.endswith(".xlsx")]
             if files:
                 out_path = os.path.join("处理完成", files[0])
 
-        if os.path.exists(out_path):
-            wb_processed = openpyxl.load_workbook(out_path)
-            ws = wb_processed.active
-            raw_data = list(ws.values)
-            if len(raw_data) > 0:
-                headers = [str(h) if h is not None else "" for h in raw_data[0]]
-                df_current = pd.DataFrame(raw_data[1:], columns=headers)
-                is_real_data = True
-                st.success("✅ 引擎处理完成！合并单元格与颜色高亮已成功保留。")
-            
-            if os.path.exists(temp_input_path):
-                os.remove(temp_input_path)
+        if process_error:
+            st.error(f"❌ 文件处理过程中发生错误：{process_error}")
+        elif os.path.exists(out_path):
+            try:
+                wb_processed = openpyxl.load_workbook(out_path)
+                ws = wb_processed.active
+                raw_data = list(ws.values)
+                if len(raw_data) > 0:
+                    headers = [str(h) if h is not None else "" for h in raw_data[0]]
+                    df_current = pd.DataFrame(raw_data[1:], columns=headers)
+                    is_real_data = True
+                    st.success("✅ 文件处理成功！下方已呈现真实数据预览。")
+            except Exception as read_ex:
+                st.error(f"❌ 读取处理结果失败：{read_ex}")
+        else:
+            st.error("⚠️ 未在『处理完成』文件夹中找到处理后的 Excel 文件，请检查原始表格表头格式。")
+
+    if os.path.exists(temp_input_path):
+        os.remove(temp_input_path)
 else:
     st.info("💡 当前未上传文件，下方展示系统**标准默认输出范例**。")
     df_current = get_default_sample_df()
