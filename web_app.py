@@ -5,7 +5,7 @@ import io
 import pandas as pd
 import openpyxl
 import config
-import process_data  # 引入你的 process_data.py 引擎
+import process_data  # 引入核心处理逻辑
 
 st.set_page_config(
     page_title="假发订单自动化处理系统",
@@ -13,10 +13,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 确定数据库文件名
-DB_FILE = getattr(process_data, 'DB_FILE_NAME', "seen_database.txt")
+# 历史去重数据库文件名
+DB_FILE = "seen_database.txt"
 
-# 1. 独立数据库加载与保存逻辑
+# 1. 独立数据库加载与保存逻辑（不依赖 process_data 内部是否有该函数）
 def local_load_db(db_path):
     seen_phones, seen_emails = set(), set()
     if os.path.exists(db_path):
@@ -65,6 +65,9 @@ def get_default_sample_df():
         }
     ])
 
+# 默认初始化预览数据
+df_current = get_default_sample_df()
+
 # ---------------- 侧边栏：数据库控制 ----------------
 st.sidebar.title("⚙️ 控制台")
 st.sidebar.subheader("💾 历史数据去重库")
@@ -100,7 +103,7 @@ is_real_data = False
 wb_processed = None
 
 if uploaded_file:
-    # 同步网页配置的话术
+    # 动态把界面输入更新进 config
     config.DEFAULT_MSG_H = msg_h_text
     config.DEFAULT_MSG_K = msg_k_text
 
@@ -108,30 +111,39 @@ if uploaded_file:
     with open(temp_input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    with st.spinner("正在调用默认引擎进行数据处理（单元格合并/公式/颜色标注/跨表去重）..."):
-        # 兼容性调用 process_data.py 中的处理函数
-        try:
-            if hasattr(process_data, 'process_single_file'):
-                # 尝试标准参数调用
-                try:
-                    process_data.process_single_file(temp_input_path, global_seen_phones, global_seen_emails)
-                except TypeError:
-                    process_data.process_single_file(temp_input_path)
-            elif hasattr(process_data, 'process_excel'):
-                process_data.process_excel(temp_input_path)
-            elif hasattr(process_data, 'main'):
-                process_data.main()
-            else:
-                st.error("⚠️ 未在 process_data.py 中找到可执行的主处理函数，请检查函数名称！")
-        except Exception as e:
-            st.error(f"⚠️ 处理过程中报错: {str(e)}")
+    with st.spinner("正在调用引擎进行数据处理（保留单元格合并/公式/高亮/去重）..."):
+        # 搜索 process_data 中的主处理函数
+        target_fn = None
+        for fn_name in dir(process_data):
+            if callable(getattr(process_data, fn_name)) and not fn_name.startswith("__"):
+                if fn_name in ["process_single_file", "process_excel", "process_file", "main", "run"]:
+                    target_fn = getattr(process_data, fn_name)
+                    break
 
-        # 检查生成的目标文件
+        # 如果没有固定名字，自动选取带 process 的函数
+        if not target_fn:
+            for fn_name in dir(process_data):
+                if "process" in fn_name.lower() and callable(getattr(process_data, fn_name)):
+                    target_fn = getattr(process_data, fn_name)
+                    break
+
+        if target_fn:
+            try:
+                # 优先按 3 个参数（含去重集合）调用
+                target_fn(temp_input_path, global_seen_phones, global_seen_emails)
+            except TypeError:
+                try:
+                    # 尝试单参数调用
+                    target_fn(temp_input_path)
+                except Exception as ex:
+                    st.error(f"调用处理函数时发生错误: {ex}")
+        else:
+            st.error("⚠️ 未能匹配到 process_data.py 中的主入口函数！")
+
+        # 读取处理完成的文件
         out_path = os.path.join("处理完成", f"已处理+{uploaded_file.name}")
-        
-        # 兼容找不到输出文件时的情况
         if not os.path.exists(out_path) and os.path.exists("处理完成"):
-            files = os.listdir("处理完成")
+            files = [f for f in os.listdir("处理完成") if f.endswith(".xlsx")]
             if files:
                 out_path = os.path.join("处理完成", files[0])
 
@@ -143,7 +155,7 @@ if uploaded_file:
                 headers = [str(h) if h is not None else "" for h in raw_data[0]]
                 df_current = pd.DataFrame(raw_data[1:], columns=headers)
                 is_real_data = True
-                st.success("✅ 引擎处理完成！已成功保留合并单元格与高亮格式。")
+                st.success("✅ 引擎处理完成！合并单元格与颜色高亮已成功保留。")
             
             if os.path.exists(temp_input_path):
                 os.remove(temp_input_path)
@@ -199,10 +211,12 @@ else:
         ws_tar = wb_processed.active
         header_row = [cell.value for cell in ws_tar[1]]
         
+        # 倒序删除未选中的列
         cols_to_delete = [idx for idx, h in enumerate(header_row, start=1) if h not in selected_cols and h is not None and h != ""]
         for col_idx in sorted(cols_to_delete, reverse=True):
             ws_tar.delete_cols(col_idx)
 
+        # 保存更新去重库
         local_save_db(DB_FILE, global_seen_phones, global_seen_emails)
 
         output_buffer = io.BytesIO()
